@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+
+// FAITH Token Contract
+contract FAITH is ERC20, Ownable, ReentrancyGuard {
+    uint256 public constant FAITH_PER_USD = 1000;
+    uint256 public constant MINTING_PERIOD = 33 days;
+
+    // Stablecoin contract addresses
+    IERC20 public usdc;
+    IERC20 public usdt;
+    IERC20 public dai;
+
+    // HEATHEN token contract
+    HEATHEN public heathenToken;
+
+    struct User {
+        uint256 initialInvestment;
+        bool isBlacklisted;
+    }
+
+    mapping(address => User) public users;
+
+    uint256 public deploymentTime;
+
+    event NewTransaction(address indexed sender, address indexed recipient, uint256 amount, uint256 timestamp);
+    event UserBlacklisted(address indexed userAddress);
+
+    constructor(
+        address _heathenToken,
+        address _usdc,
+        address _usdt,
+        address _dai
+    ) ERC20("FAITH Token", "FAITH") {
+        heathenToken = HEATHEN(_heathenToken);
+        usdc = IERC20(_usdc);
+        usdt = IERC20(_usdt);
+        dai = IERC20(_dai);
+        _mint(msg.sender, 100000000 * 10 ** uint(decimals()));
+        deploymentTime = block.timestamp;
+    }
+
+    modifier onlyDuringMintingPeriod() {
+        require(block.timestamp <= deploymentTime + MINTING_PERIOD, "Minting period has ended");
+        _;
+    }
+
+    // Mint FAITH tokens using USDC, USDT, or DAI
+    function mintFAITH(uint256 stablecoinAmount, address stablecoin) public nonReentrant onlyDuringMintingPeriod {
+        require(!users[msg.sender].isBlacklisted, "Sender is blacklisted");
+        require(stablecoin == address(usdc) || stablecoin == address(usdt) || stablecoin == address(dai), "Invalid stablecoin address");
+        require(stablecoinAmount >= 1 ether, "Stablecoin amount must be at least 1");
+
+        uint256 faithAmount = stablecoinAmount * FAITH_PER_USD / 1 ether;
+        _mint(msg.sender, faithAmount);
+
+        IERC20(stablecoin).transferFrom(msg.sender, address(this), stablecoinAmount);
+
+        // Store initial investment for user
+        users[msg.sender].initialInvestment += stablecoinAmount;
+    }
+
+    // Sell FAITH tokens to burn and receive initial investment in stablecoin minus gas fees
+    function sellFAITH(uint256 faithAmount, address stablecoin) public nonReentrant {
+        require(!users[msg.sender].isBlacklisted, "Sender is blacklisted");
+        require(balanceOf(msg.sender) >= faithAmount, "Insufficient FAITH balance");
+        require(stablecoin == address(usdc) || stablecoin == address(usdt) || stablecoin == address(dai), "Invalid stablecoin address");
+
+        uint256 stablecoinAmount = faithAmount * 1 ether / FAITH_PER_USD;
+        uint256 initialInvestment = users[msg.sender].initialInvestment;
+        require(stablecoinAmount <= initialInvestment, "Cannot redeem more than initial investment");
+
+        _burn(msg.sender, faithAmount);
+
+        uint256 gasFee = calculateGasFee();
+        uint256 payout = stablecoinAmount > gasFee ? stablecoinAmount - gasFee : 0;
+
+        IERC20(stablecoin).transfer(msg.sender, payout);
+
+        users[msg.sender].initialInvestment -= stablecoinAmount;
+
+        // Mint and send 1 HEATHEN token
+        heathenToken.mint(msg.sender, 1);
+
+        // Blacklist the user
+        users[msg.sender].isBlacklisted = true;
+        emit UserBlacklisted(msg.sender);
+    }
+
+    // Create a transaction
+    function createTransaction(address recipient, uint256 amount, string memory affiliateLink) public nonReentrant {
+        require(!users[msg.sender].isBlacklisted, "Sender is blacklisted");
+        require(recipient != address(0), "Invalid recipient address");
+        require(amount > 0, "Invalid transaction amount");
+        require(!users[recipient].isBlacklisted, "Recipient is blacklisted");
+
+        emit NewTransaction(msg.sender, recipient, amount, block.timestamp);
+    }
+
+    // Calculate the gas fee for a transaction
+    function calculateGasFee() internal view returns (uint256) {
+        // Implement the logic to calculate the current gas fee in the stablecoin
+        // This is a placeholder function and should be replaced with actual gas fee calculation
+        return 1 ether; // For example, 1 USDT or 1 USDC equivalent
+    }
+}
